@@ -91,3 +91,57 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+#if SCHED_POLICY == SCHED_PRIORITY
+// 设置进程静态优先级
+uint64
+sys_setpriority(void)
+{
+  int priority;
+  
+  argint(0, &priority);
+    
+  // 优先级范围检查 (0-31)
+  if(priority < 0 || priority > 31)
+    return -1;
+  
+  struct proc *p = myproc();
+  acquire(&p->lock);
+  p->static_priority = priority;
+  p->dynamic_priority = priority;
+  p->priority = priority;
+  release(&p->lock);
+  
+  return 0;
+}
+#else
+uint64 sys_setpriority(void) { return 0; } 
+#endif
+
+// 获取进程调度信息
+uint64
+sys_getschedinfo(void)
+{
+  struct proc *p = myproc();
+  
+  acquire(&p->lock);
+  printf("PID: %d, Name: %s\n", p->pid, p->name);
+    
+#if SCHED_POLICY == SCHED_PRIORITY
+  printf("  Static Priority: %d\n", p->static_priority);
+  printf("  Dynamic Priority: %d\n", p->dynamic_priority);
+#elif SCHED_POLICY == SCHED_SJF
+  printf("  Last Burst: %d\n", p->last_burst);
+  printf("  Predicted Burst: %d\n", p->predicted_burst);
+  printf("  Total Bursts: %d\n", p->total_bursts);
+#endif
+  
+  release(&p->lock);
+  return 0;
+}
+
+uint64
+sys_yield(void)
+{
+  yield();
+  return 0;
+}

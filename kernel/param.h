@@ -11,3 +11,10 @@
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
 #define FSSIZE       2000  // size of file system in blocks
 #define MAXPATH      128   // maximum file path name
+#define SCHED_RR     0     // Round Robin (原始xv6)
+#define SCHED_FCFS   1     // First Come First Serve
+#define SCHED_PRIORITY 2   // Priority Scheduling
+#define SCHED_SJF    3     // Shortest Job First (基于预测)
+
+#define SCHED_POLICY SCHED_PRIORITY // 调度策略: SCHED_RR, SCHED_FCFS, SCHED_PRIORITY, SCHED_SJF
+

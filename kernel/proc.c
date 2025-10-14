@@ -101,6 +101,34 @@ allocpid()
 
   return pid;
 }
+// 调度函数的进程初始化函数
+#if SCHED_POLICY == SCHED_RR
+void proc_init_RR(struct proc *p) { return; } // RR不需要做任何事情
+#elif SCHED_POLICY == SCHED_FCFS
+void proc_init_FCFS(struct proc *p) {
+  p->create_time = ticks;
+}
+#elif SCHED_POLICY == SCHED_PRIORITY
+void proc_init_PRIORITY(struct proc *p) {
+  // 默认中等优先级
+  p->create_time = ticks;
+  p->runtime = 0;
+  p->static_priority = 16;    // 0-31, 16为中等
+  p->dynamic_priority = 16;
+  p->priority = 16;
+}
+#elif SCHED_POLICY == SCHED_SJF
+void
+proc_init_SJF(struct proc *p)
+{
+  // 初始化 SJF 预测相关字段
+  p->runtime = 0;
+  p->last_burst = 0;
+  p->predicted_burst = 100;    // 默认预测值 (100 ticks)
+  p->burst_start_time = 0;
+  p->total_bursts = 0;
+}
+#endif
 
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
@@ -145,9 +173,22 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+  
+  // 根据编译时选择的调度策略进行初始化
+  #if SCHED_POLICY == SCHED_RR
+    proc_init_RR(p);
+  #elif SCHED_POLICY == SCHED_FCFS
+    proc_init_FCFS(p);
+  #elif SCHED_POLICY == SCHED_PRIORITY
+    proc_init_PRIORITY(p);
+  #elif SCHED_POLICY == SCHED_SJF
+    proc_init_SJF(p);
+  #endif
 
   return p;
 }
+
+
 
 // free a proc structure and the data hanging from it,
 // including user pages.
@@ -441,8 +482,29 @@ wait(uint64 addr)
 //  - swtch to start running that process.
 //  - eventually that process transfers control
 //    via swtch back to the scheduler.
+void scheduler_RR(void);
+void scheduler_FCFS(void);
+void scheduler_PRIORITY(void);
+void scheduler_SJF(void);
+
 void
 scheduler(void)
+{
+  #if SCHED_POLICY == SCHED_RR
+    scheduler_RR();
+  #elif SCHED_POLICY == SCHED_FCFS
+    scheduler_FCFS();
+  #elif SCHED_POLICY == SCHED_PRIORITY
+    scheduler_PRIORITY();
+  #elif SCHED_POLICY == SCHED_SJF
+    scheduler_SJF();
+  #else
+    scheduler_RR();
+  #endif
+}
+
+void
+scheduler_RR(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
@@ -472,6 +534,198 @@ scheduler(void)
     }
   }
 }
+#if SCHED_POLICY == SCHED_FCFS
+void
+scheduler_FCFS(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  
+  c->proc = 0;
+  for(;;){
+    intr_on();
+    
+    // 找到创建时间最早的 RUNNABLE 进程
+    struct proc *earliest = 0;
+    uint64 earliest_time = 0xffffffffffffffff;
+    
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state == RUNNABLE) {
+        if(p->create_time < earliest_time) {
+          // 释放之前选中的进程
+          if(earliest != 0) {
+            release(&earliest->lock);
+          }
+          earliest = p;
+          earliest_time = p->create_time;
+          // 继续持有锁
+        } else {
+          release(&p->lock);
+        }
+      } else {
+        release(&p->lock);
+      }
+    }
+
+    // 运行选中的进程
+    if(earliest != 0) {
+      earliest->state = RUNNING;
+      c->proc = earliest;
+      
+      swtch(&c->context, &earliest->context);
+      
+      c->proc = 0;
+      release(&earliest->lock);
+    }
+  }
+}
+#endif
+
+#if SCHED_POLICY == SCHED_PRIORITY
+#define ANTI_HUNGRY false
+void
+scheduler_PRIORITY(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  
+  c->proc = 0;
+  for(;;){
+    intr_on();
+    
+    // 找到优先级最高（数值最小）的 RUNNABLE 进程
+    struct proc *highest = 0;
+    int min_priority = 32;  // 大于最大优先级值
+    
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state == RUNNABLE) {
+        // 使用动态优先级进行调度
+        if(p->dynamic_priority < min_priority) {
+          if(highest != 0) {
+            release(&highest->lock);
+          }
+          highest = p;
+          min_priority = p->dynamic_priority;
+        } else {
+          release(&p->lock);
+        }
+      } else {
+        release(&p->lock);
+      }
+    }
+    
+    // 运行选中的进程
+    if(highest != 0) {
+      highest->state = RUNNING;
+      c->proc = highest;
+      
+      uint64 start_time = ticks;
+      swtch(&c->context, &highest->context);
+      uint64 run_time = ticks - start_time;
+      highest->runtime += run_time;
+      #if ANTI_HUNGRY == true 
+      // 简单的动态优先级调整：运行后略微降低优先级（防止饥饿）
+      if(highest->dynamic_priority < 31) {
+        highest->dynamic_priority++;
+      }
+      #endif
+      
+      c->proc = 0;
+      release(&highest->lock);
+    }
+    
+    #if ANTI_HUNGRY == true
+    // 周期性恢复动态优先级（防止饥饿）
+    static uint64 last_boost = 0;
+    if(ticks - last_boost > 1000) {  // 每1000 ticks
+      for(p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if(p->state != UNUSED) {
+          p->dynamic_priority = p->static_priority;
+        }
+        release(&p->lock);
+      }
+      last_boost = ticks;
+    }
+    #endif
+  }
+}
+#endif
+
+#if SCHED_POLICY == SCHED_SJF
+// 辅助函数
+void
+update_burst_prediction(struct proc *p, uint64 actual_burst)
+{
+  if(actual_burst == 0) return;  // 避免除零
+  
+  // 指数加权移动平均 (α = 0.5)
+  p->last_burst = actual_burst;
+  
+  if(p->total_bursts == 0) {
+    p->predicted_burst = actual_burst;
+  } else {
+    // τ(n+1) = 0.5 * t(n) + 0.5 * τ(n)
+    p->predicted_burst = (actual_burst + p->predicted_burst) / 2;
+  }
+  
+  p->total_bursts++;
+}
+
+void
+scheduler_SJF(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  
+  c->proc = 0;
+  for(;;){
+    intr_on();
+    
+    // 找到预测运行时间最短的 RUNNABLE 进程
+    struct proc *shortest = 0;
+    uint64 min_predicted = 0xffffffffffffffff;
+    
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state == RUNNABLE) {
+        if(p->predicted_burst < min_predicted) {
+          if(shortest != 0) {
+            release(&shortest->lock);
+          }
+          shortest = p;
+          min_predicted = p->predicted_burst;
+        } else {
+          release(&p->lock);
+        }
+      } else {
+        release(&p->lock);
+      }
+    }
+    
+    // 运行选中的进程
+    if(shortest != 0) {
+      shortest->state = RUNNING;
+      c->proc = shortest;
+      
+      // 记录 burst 开始时间
+      shortest->burst_start_time = ticks;
+      
+      swtch(&c->context, &shortest->context);
+      
+      // 计算实际 burst 时间并更新预测
+      uint64 actual_burst = ticks - shortest->burst_start_time;
+      shortest->runtime += actual_burst;
+      update_burst_prediction(shortest, actual_burst);
+      
+      c->proc = 0;
+      release(&shortest->lock);
+    }
+  }
+}
+#endif
 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores

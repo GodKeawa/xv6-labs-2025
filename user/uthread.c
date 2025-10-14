@@ -10,14 +10,53 @@
 #define STACK_SIZE  8192
 #define MAX_THREAD  4
 
+struct context {
+  uint64 ra;
+  uint64 sp;
+
+  // callee-saved
+  uint64 s0;
+  uint64 s1;
+  uint64 s2;
+  uint64 s3;
+  uint64 s4;
+  uint64 s5;
+  uint64 s6;
+  uint64 s7;
+  uint64 s8;
+  uint64 s9;
+  uint64 s10;
+  uint64 s11;
+};
+
 
 struct thread {
-  char       stack[STACK_SIZE]; /* the thread's stack */
-  int        state;             /* FREE, RUNNING, RUNNABLE */
+  struct context  context;           // 添加一个context的instance, 方便进行上下文切换 
+  char            stack[STACK_SIZE]; /* the thread's stack */
+  int             state;             /* FREE, RUNNING, RUNNABLE */
 };
 struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
 extern void thread_switch(uint64, uint64);
+
+void layout() {
+  return;
+  for (int i = 0; i < MAX_THREAD; i++) {
+    struct thread* t = all_thread + i;
+    printf("thread%d:%l:%l:%l:%l; ", i, t, &t->context, &t->stack, &t->state);
+  }
+  printf("\n");
+}
+
+void debugger() {
+  return;
+  printf("current_thread:%l #", current_thread);
+  for (int i = 0; i < MAX_THREAD; i++) {
+    struct thread* t = all_thread + i;
+    printf("thread%d: %l:%d;", i, t, t->state);
+  }
+  printf("\n");
+}
               
 void 
 thread_init(void)
@@ -33,12 +72,12 @@ void
 thread_schedule(void)
 {
   struct thread *t, *next_thread;
-
+  debugger();
   /* Find another runnable thread. */
   next_thread = 0;
   t = current_thread + 1;
   for(int i = 0; i < MAX_THREAD; i++){
-    if(t >= all_thread + MAX_THREAD)
+    if(t >= all_thread + MAX_THREAD) // 循环检测，只检测4次
       t = all_thread;
     if(t->state == RUNNABLE) {
       next_thread = t;
@@ -46,13 +85,15 @@ thread_schedule(void)
     }
     t = t + 1;
   }
-
+  debugger();
   if (next_thread == 0) {
     printf("thread_schedule: no runnable threads\n");
     exit(-1);
   }
-
-  if (current_thread != next_thread) {         /* switch threads?  */
+  // DEBUG
+  // printf("switching context: %l -> %l\n", current_thread, next_thread);
+  // printf("func: %l -> %l\n", current_thread->context.ra, next_thread->context.ra);
+  if (current_thread != next_thread) {         /* switch threads?*/
     next_thread->state = RUNNING;
     t = current_thread;
     current_thread = next_thread;
@@ -60,6 +101,8 @@ thread_schedule(void)
      * Invoke thread_switch to switch from t to next_thread:
      * thread_switch(??, ??);
      */
+    debugger();
+    thread_switch((uint64)&t->context, (uint64)&next_thread->context); // 上下文切换
   } else
     next_thread = 0;
 }
@@ -70,17 +113,23 @@ thread_create(void (*func)())
   struct thread *t;
 
   for (t = all_thread; t < all_thread + MAX_THREAD; t++) {
-    if (t->state == FREE) break;
+    if (t->state == FREE) break; // 找到线程空位
   }
   t->state = RUNNABLE;
   // YOUR CODE HERE
+  // 创建一个线程，即伪造一个运行环境，包括所有寄存器和栈
+  // 先给线程加上一个context的字段，用来保存上下文
+  t->context.ra = (uint64)func;        // 伪造函数起始点
+  t->context.sp = (uint64)&(t->stack[STACK_SIZE]); // 伪造栈空间,注意栈是从高地址向低地址增长的
+  // 其他寄存器保持默认，调度时上下文切换会使得函数被调用
+  debugger();
 }
 
 void 
 thread_yield(void)
 {
   current_thread->state = RUNNABLE;
-  thread_schedule();
+  thread_schedule(); // 调度在全部a,b,c线程启动完成之前，都会最终回到main
 }
 
 volatile int a_started, b_started, c_started;
@@ -156,6 +205,8 @@ main(int argc, char *argv[])
   thread_create(thread_b);
   thread_create(thread_c);
   current_thread->state = FREE;
+  debugger();
+  layout();
   thread_schedule();
   exit(0);
 }
