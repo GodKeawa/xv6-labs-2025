@@ -109,16 +109,12 @@ struct proc {
 #if SCHED_POLICY == SCHED_RR
                                  // RR 不需要任何参数
 #elif SCHED_POLICY == SCHED_FCFS
-    uint64 create_time;
+    uint64 create_time;          // 创建时间
 #elif SCHED_POLICY == SCHED_PRIORITY
-    uint64 create_time;
-    uint64 runtime; 
-    int priority;                // 优先级 (0-31, 数值越小优先级越高)
-    int static_priority;         // 静态优先级 (用户设置)
-    int dynamic_priority;        // 动态优先级 (系统调整)
+    int priority;                // 优先级 (0-31, 数值越小优先级越高),没啥实际用途
+    int static_priority;         // 静态优先级 (初始化或用户设置)
+    int dynamic_priority;        // 动态优先级 (系统调整，处理退化功能)
 #elif SCHED_POLICY == SCHED_SJF
-    uint64 runtime; 
-    uint64 last_burst;           // 上一次 CPU burst 的实际时间
     uint64 predicted_burst;      // 预测的下一次 CPU burst
     uint64 burst_start_time;     // 当前 burst 开始时间
     uint64 total_bursts;         // 总 burst 次数

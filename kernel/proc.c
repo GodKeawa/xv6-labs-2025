@@ -110,21 +110,17 @@ void proc_init_FCFS(struct proc *p) {
 }
 #elif SCHED_POLICY == SCHED_PRIORITY
 void proc_init_PRIORITY(struct proc *p) {
-  // 默认中等优先级
-  p->create_time = ticks;
-  p->runtime = 0;
-  p->static_priority = 16;    // 0-31, 16为中等
-  p->dynamic_priority = 16;
-  p->priority = 16;
+  // 默认最高优先级，因为有系统进程和调度进程
+  p->static_priority = 0;    // 0-31
+  p->dynamic_priority = 0;
+  p->priority = 0;
 }
 #elif SCHED_POLICY == SCHED_SJF
 void
 proc_init_SJF(struct proc *p)
 {
   // 初始化 SJF 预测相关字段
-  p->runtime = 0;
-  p->last_burst = 0;
-  p->predicted_burst = 100;    // 默认预测值 (100 ticks)
+  p->predicted_burst = 5;    // 默认预测值 (5 ticks)
   p->burst_start_time = 0;
   p->total_bursts = 0;
 }
@@ -519,9 +515,17 @@ scheduler_RR(void)
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+        #if DEBUG == 1
+        printf("CPU %d-Sched %d\n", cpuid(), p->pid);
+        #endif
+
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
+        #if DEBUG == 1
+        printf("CPU %d-Running %d\n", cpuid(), p->pid);
+        #endif
+
         p->state = RUNNING;
         c->proc = p;
         swtch(&c->context, &p->context);
@@ -552,6 +556,10 @@ scheduler_FCFS(void)
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+        #if DEBUG == 1
+        printf("CPU %d-Sched %d:%d\n", cpuid(), p->pid, p->create_time);
+        #endif
+
         if(p->create_time < earliest_time) {
           // 释放之前选中的进程
           if(earliest != 0) {
@@ -570,6 +578,10 @@ scheduler_FCFS(void)
 
     // 运行选中的进程
     if(earliest != 0) {
+      #if DEBUG == 1
+      printf("CPU %d-Running %d:%d\n", cpuid(), earliest->pid, earliest->create_time);
+      #endif
+
       earliest->state = RUNNING;
       c->proc = earliest;
       
@@ -583,7 +595,7 @@ scheduler_FCFS(void)
 #endif
 
 #if SCHED_POLICY == SCHED_PRIORITY
-#define ANTI_HUNGRY false
+#define ANTI_HUNGRY 1
 void
 scheduler_PRIORITY(void)
 {
@@ -596,11 +608,14 @@ scheduler_PRIORITY(void)
     
     // 找到优先级最高（数值最小）的 RUNNABLE 进程
     struct proc *highest = 0;
-    int min_priority = 32;  // 大于最大优先级值
+    int min_priority = 32;  // 最大优先级值
     
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+        #if DEBUG == 1
+        printf("CPU %d-Sched %d:%d\n", cpuid(), p->pid, p->dynamic_priority);
+        #endif
         // 使用动态优先级进行调度
         if(p->dynamic_priority < min_priority) {
           if(highest != 0) {
@@ -618,15 +633,15 @@ scheduler_PRIORITY(void)
     
     // 运行选中的进程
     if(highest != 0) {
+      #if DEBUG == 1
+      printf("CPU %d-Running %d:%d\n", cpuid(), highest->pid, highest->dynamic_priority);
+      #endif
       highest->state = RUNNING;
       c->proc = highest;
       
-      uint64 start_time = ticks;
       swtch(&c->context, &highest->context);
-      uint64 run_time = ticks - start_time;
-      highest->runtime += run_time;
-      #if ANTI_HUNGRY == true 
-      // 简单的动态优先级调整：运行后略微降低优先级（防止饥饿）
+      #if ANTI_HUNGRY == 1 
+      // 简单的动态优先级调整：运行后略微降低优先级
       if(highest->dynamic_priority < 31) {
         highest->dynamic_priority++;
       }
@@ -636,10 +651,10 @@ scheduler_PRIORITY(void)
       release(&highest->lock);
     }
     
-    #if ANTI_HUNGRY == true
-    // 周期性恢复动态优先级（防止饥饿）
+    #if ANTI_HUNGRY == 1
+    // 周期性恢复动态优先级
     static uint64 last_boost = 0;
-    if(ticks - last_boost > 1000) {  // 每1000 ticks
+    if(ticks - last_boost > 10) {  // 每10 ticks
       for(p = proc; p < &proc[NPROC]; p++) {
         acquire(&p->lock);
         if(p->state != UNUSED) {
@@ -659,11 +674,7 @@ scheduler_PRIORITY(void)
 void
 update_burst_prediction(struct proc *p, uint64 actual_burst)
 {
-  if(actual_burst == 0) return;  // 避免除零
-  
   // 指数加权移动平均 (α = 0.5)
-  p->last_burst = actual_burst;
-  
   if(p->total_bursts == 0) {
     p->predicted_burst = actual_burst;
   } else {
@@ -691,6 +702,10 @@ scheduler_SJF(void)
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+        #if DEBUG == 1
+        printf("CPU %d-Sched %d:%d\n", cpuid(), p->pid, p->predicted_burst);
+        #endif
+
         if(p->predicted_burst < min_predicted) {
           if(shortest != 0) {
             release(&shortest->lock);
@@ -707,6 +722,10 @@ scheduler_SJF(void)
     
     // 运行选中的进程
     if(shortest != 0) {
+      #if DEBUG == 1
+      printf("CPU %d-Running %d:%d\n", cpuid(), shortest->pid, shortest->predicted_burst);
+      #endif
+
       shortest->state = RUNNING;
       c->proc = shortest;
       
@@ -717,7 +736,6 @@ scheduler_SJF(void)
       
       // 计算实际 burst 时间并更新预测
       uint64 actual_burst = ticks - shortest->burst_start_time;
-      shortest->runtime += actual_burst;
       update_burst_prediction(shortest, actual_burst);
       
       c->proc = 0;

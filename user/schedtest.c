@@ -3,33 +3,34 @@
 #include "kernel/stat.h"
 #include "user/user.h"
 
-int count = 0;
-int num_procs = 4;
+int count = 0;  // 进程创建计数
+int num_procs = 4;  // 总进程数
 
 // 简单的工作负载函数
 void
 work(int id, int workload)
-{
-  printf("[Process %d] PID:%d Started\n", id, getpid());
+{ 
+  // 用户层的printf不是原子操作，是一个字符一个字符打印的，不要在这里打印内容
+  // printf("%d", id);
   // 执行一些计算工作
   for(int i = 0; i < workload; i++) {
-    // 每完成一部分工作
+    // 每完成一部分工作,交出CPU
     if(i % 5 == 0) {
-      printf("[Process %d] Working... %d/%d\n", id, i, workload);
+      yield();
     }
     
     // 模拟计算工作
     uint64 sum = 0;
     for (int i = 0; i < 1000; i++) {
-      for (int j = 0; j < 100000; j++) {
+      for (int j = 0; j <= 100000; j++) {
         sum += j;
       }
-      for (int k = 10000; k >= 0; k--) {
+      for (int k = 100000; k >= 0; k--) {
         sum -= k;
       }
     }
   }
-  printf("[Process %d] Finished\n", id);
+  // printf("%d", id);
 }
 
 int
@@ -43,9 +44,8 @@ main(int argc, char *argv[])
   
   // 不同调度算法下的优先级设置
   #if SCHED_POLICY == SCHED_PRIORITY
-    setpriority(0);
-    // int priorities[] = {0, 10, 20, 30}; // 优先级：高到低
-    int priorities[] = {30, 20, 10, 0};  // 优先级：低到高
+    // int priorities[] = {7, 15, 23, 31}; // 优先级：高到低
+    int priorities[] = {31, 23, 15, 7};  // 优先级：低到高
     printf("Using PRIORITY scheduling\n");
     printf("Process priorities: ");
     for(int i = 0; i < num_procs; i++) {
@@ -68,17 +68,16 @@ main(int argc, char *argv[])
     }
     else if(pid == 0) {
       // 子进程
-      yield();
       #if SCHED_POLICY == SCHED_PRIORITY        
         // 如果是优先级调度，设置优先级
         setpriority(priorities[count]);
       #endif
+      yield(); // 先yield一下，试着先让其他进程创建，效果有限
       // 执行工作
       work(count, workload);
       exit(0);
     }
     // 父进程继续循环创建下一个进程
-    printf("[Parent] Created process %d", pid);
   }
   
   // 父进程等待所有子进程完成

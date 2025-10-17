@@ -10,7 +10,8 @@
 #define STACK_SIZE  8192
 #define MAX_THREAD  4
 
-struct context {
+// 写一个新的context，不引用已有的实现
+struct context { 
   uint64 ra;
   uint64 sp;
 
@@ -39,6 +40,7 @@ struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
 extern void thread_switch(uint64, uint64);
 
+// DEBUG 函数
 void layout() {
   return;
   for (int i = 0; i < MAX_THREAD; i++) {

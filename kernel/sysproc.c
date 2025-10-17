@@ -114,7 +114,7 @@ sys_setpriority(void)
   return 0;
 }
 #else
-uint64 sys_setpriority(void) { return 0; } 
+uint64 sys_setpriority(void) { return 0; } // 也可以不定义，因为有条件编译
 #endif
 
 // 获取进程调度信息
@@ -130,7 +130,6 @@ sys_getschedinfo(void)
   printf("  Static Priority: %d\n", p->static_priority);
   printf("  Dynamic Priority: %d\n", p->dynamic_priority);
 #elif SCHED_POLICY == SCHED_SJF
-  printf("  Last Burst: %d\n", p->last_burst);
   printf("  Predicted Burst: %d\n", p->predicted_burst);
   printf("  Total Bursts: %d\n", p->total_bursts);
 #endif
@@ -142,6 +141,6 @@ sys_getschedinfo(void)
 uint64
 sys_yield(void)
 {
-  yield();
+  yield(); // return void
   return 0;
 }
