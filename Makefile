@@ -188,7 +188,6 @@ UPROGS=\
 	$U/_grind\
 	$U/_wc\
 	$U/_zombie\
-	$U/_uthread\
 	$U/_schedtest\
 
 ifeq ($(LAB),$(filter $(LAB), lock))
