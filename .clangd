@@ -1,0 +1,4 @@
+CompileFlags:
+    Add:
+        - -I/home/godke/Works/xv6-labs-2024
+    CompilationDatabase: .
