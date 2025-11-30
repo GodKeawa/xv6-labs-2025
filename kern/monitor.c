@@ -10,6 +10,7 @@
 #include <kern/console.h>
 #include <kern/monitor.h>
 #include <kern/kdebug.h>
+#include <kern/pmap.h>
 
 #define CMDBUF_SIZE	80	// enough for one VGA text line
 
@@ -24,6 +25,7 @@ struct Command {
 static struct Command commands[] = {
 	{ "help", "Display this list of commands", mon_help },
 	{ "kerninfo", "Display information about the kernel", mon_kerninfo },
+	{ "showva2pa", "Show the physical address mapped to a given virtual address or range", mon_showva2pa },
 };
 
 /***** Implementations of basic kernel monitor commands *****/
@@ -58,6 +60,52 @@ int
 mon_backtrace(int argc, char **argv, struct Trapframe *tf)
 {
 	// Your code here.
+	return 0;
+}
+
+int
+mon_showva2pa(int argc, char **argv, struct Trapframe *tf)
+{
+	if (argc == 1) {
+		cprintf("Usage: showva2pa <virtual address> or showva2pa <start address> <end address>\n");
+	} else if (argc == 2) {
+		pte_t* pte_store_ptr;
+		pte_t** pte_store = &pte_store_ptr;
+		void* va = (void*)strtol(argv[1], NULL, 0);
+		struct PageInfo* pp = page_lookup(kern_pgdir, va, pte_store);
+		if (pp) {
+			physaddr_t pa = page2pa(pp);
+			cprintf("VA: 0x%08x, PA: 0x%08x, pp_ref: %u, PTE_W: %u, PTE_U: %u\n", 
+				(uintptr_t) va, pa, 
+				pp->pp_ref,
+				(((uint32_t)*(pte_store) & PTE_W) != 0) ? 1 : 0,
+				(((uint32_t)*(pte_store) & PTE_U) != 0) ? 1 : 0
+			);
+		} else {	
+			cprintf("VA 0x%08x does not have a mapped physical page!\n", va);
+		}
+	} else if (argc == 3) {
+		pte_t* pte_store_ptr;
+		pte_t** pte_store = &pte_store_ptr;
+		void* start_va = (void*)strtol(argv[1], NULL, 0);
+		void* end_va = (void*)strtol(argv[2], NULL, 0);
+		for (void* va = start_va; va <= end_va; va += PGSIZE) {
+			struct PageInfo* pp = page_lookup(kern_pgdir, va, pte_store);
+			if (pp) {
+				physaddr_t pa = page2pa(pp);
+				cprintf("VA: 0x%08x, PA: 0x%08x, pp_ref: %u, PTE_W: %u, PTE_U: %u\n", 
+					(uintptr_t)va, pa, 
+					pp->pp_ref,
+					(((uint32_t)*(pte_store) & PTE_W) != 0) ? 1 : 0,
+					(((uint32_t)*(pte_store) & PTE_U) != 0) ? 1 : 0
+				);
+			} else {
+				cprintf("VA 0x%08x does not have a mapped physical page!\n", (uintptr_t)va);
+			}
+		}
+	} else {
+		cprintf("Usage: showva2pa <virtual address> or showva2pa <start address> <end address>\n");
+	}
 	return 0;
 }
 
