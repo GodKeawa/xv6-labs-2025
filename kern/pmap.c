@@ -103,7 +103,7 @@ boot_alloc(uint32_t n)
 	//
 	// LAB 2: Your code here.
 
-    // 如果n==0，直接返回
+    // 如果n==0，直接返回地址
     if (n == 0) return nextfree;
 
     // 计算需要的内存的结束地址，向上对齐到页大小
@@ -162,7 +162,7 @@ mem_init(void)
 	// Your code goes here:
 	pages = boot_alloc(npages * sizeof(struct PageInfo));
 	memset(pages, 0, npages * sizeof(struct PageInfo));
-	
+
 	//////////////////////////////////////////////////////////////////////
 	// Now that we've allocated the initial kernel data structures, we set
 	// up the list of free physical pages. Once we've done so, all further
@@ -208,7 +208,8 @@ mem_init(void)
 	// we just set up the mapping anyway.
 	// Permissions: kernel RW, user NONE
 	// Your code goes here:
-	boot_map_region(kern_pgdir, KERNBASE, 0x100000000 - KERNBASE, 0x0, PTE_W);
+    // typedef uint32_t size_t; 只能表示到2^32-1,这里使用uint的特性实现
+	boot_map_region(kern_pgdir, KERNBASE, (size_t)(-KERNBASE), 0x0, PTE_W);
 
 	// Check that the initial page directory has been set up correctly.
 	check_kern_pgdir();
@@ -382,22 +383,22 @@ pgdir_walk(pde_t *pgdir, const void *va, int create)
 {
     pde_t pde = pgdir[PDX(va)];
 
-    // 如果页表页已存在，直接返回对应 PTE 的地址
+    // 如果页表已存在，直接返回对应 PTE 的地址
     if (pde & PTE_P) {
         pte_t *pt = (pte_t *) KADDR(PTE_ADDR(pde));
         return &pt[PTX(va)];
     }
 
-    // 页表页不存在：按需创建
+    // 页表不存在：按需创建
     if (!create)
         return NULL;
 
-    // 分配一个新的页表页并清零
+    // 分配一个新的页表并清零
     struct PageInfo *pp = page_alloc(ALLOC_ZERO);
     if (!pp)
         return NULL;
 
-    // 页目录持有对该页表页的引用
+    // 页目录持有对该页表的引用
     pp->pp_ref++;
 
     // 在 PDE 中写入物理地址并置上权限位（Present + Writeable + User）
@@ -461,19 +462,19 @@ boot_map_region(pde_t *pgdir, uintptr_t va, size_t size, physaddr_t pa, int perm
 int
 page_insert(pde_t *pgdir, struct PageInfo *pp, void *va, int perm)
 {
-    // 1. 找到或创建对应的 PTE
+    // 找到或创建对应的 PTE
     pte_t *pte = pgdir_walk(pgdir, va, 1); // create=1，若分配页表页失败返回 NULL
     if (!pte)
         return -E_NO_MEM;
 
-    // 2. 提前增加引用计数（处理"同一页重新插入到同一地址"的情况）
+    // 提前增加引用计数（处理"同一页重新插入到同一地址"的情况）
     pp->pp_ref++;
 
-    // 3. 如果 va 原有映射，先移除（会递减旧页的 pp_ref，可能释放）
+    // 如果 va 原有映射，先移除（会递减旧页的 pp_ref，可能释放）
     if (*pte & PTE_P)
         page_remove(pgdir, va);
 
-    // 4. 写入新 PTE：物理地址 + 权限 + Present
+    // 写入新 PTE：物理地址 + 权限 + Present
     *pte = page2pa(pp) | perm | PTE_P;
 
     return 0;

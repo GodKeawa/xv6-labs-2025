@@ -1,4 +1,6 @@
 CompileFlags:
-    Add:
-        - -I/home/godke/Works/jos
+    Remove:
+        # JOS 项目中常见的，Clangd 不兼容的参数
+        - "-gstab" 
+        - "-fno-tree-ch"
     CompilationDatabase: .
