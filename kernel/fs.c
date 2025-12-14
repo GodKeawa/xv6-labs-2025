@@ -223,6 +223,7 @@ ialloc(uint dev, short type)
 // Must be called after every change to an ip->xxx field
 // that lives on disk.
 // Caller must hold ip->lock.
+// 
 void
 iupdate(struct inode *ip)
 {
@@ -408,7 +409,7 @@ bmap(struct inode *ip, uint bn)
   uint addr, *a;
   struct buf *bp;
 
-  if(bn < NDIRECT){
+  if(bn < NDIRECT){ // bn < NDIRECT, 直接块
     if((addr = ip->addrs[bn]) == 0){
       addr = balloc(ip->dev);
       if(addr == 0)
@@ -417,9 +418,9 @@ bmap(struct inode *ip, uint bn)
     }
     return addr;
   }
-  bn -= NDIRECT;
+  bn -= NDIRECT;  // bn >= NDIRECT, 使用间接块
 
-  if(bn < NINDIRECT){
+  if(bn < NINDIRECT){ // bn < NINDIRECT, 一级间接块
     // Load indirect block, allocating if necessary.
     if((addr = ip->addrs[NDIRECT]) == 0){
       addr = balloc(ip->dev);
@@ -427,19 +428,57 @@ bmap(struct inode *ip, uint bn)
         return 0;
       ip->addrs[NDIRECT] = addr;
     }
-    bp = bread(ip->dev, addr);
+    bp = bread(ip->dev, addr); // 加载一级间接块
     a = (uint*)bp->data;
-    if((addr = a[bn]) == 0){
+    if((addr = a[bn]) == 0){  // 查看对应的数据块是否存在
       addr = balloc(ip->dev);
       if(addr){
-        a[bn] = addr;
-        log_write(bp);
+        a[bn] = addr;   // 分配数据块
+        log_write(bp);  // 写回一级间接块
       }
     }
     brelse(bp);
     return addr;
   }
+  bn -= NINDIRECT; // bn >= NINDIRECT, 使用二级间接块
 
+  if (bn < NINDIRECT2) { // bn < NINDIRECT2, 二级间接块
+    // Load secondary indirect block, allocating if necessary.
+    if ((addr = ip->addrs[NDIRECT + 1]) == 0) {
+      addr = balloc(ip->dev);
+      if (addr == 0)
+        return 0;
+      ip->addrs[NDIRECT + 1] = addr;
+    }
+    bp = bread(ip->dev, addr);  // 加载二级间接块
+    a = (uint*)bp->data;
+    uint index1 = bn / NINDIRECT; // 索引
+    uint index2 = bn % NINDIRECT;  
+    // Load first-level indirect block, allocating if necessary.
+    if ((addr = a[index1]) == 0) {
+      addr = balloc(ip->dev);
+      if (addr == 0) {
+        brelse(bp);
+        return 0;
+      }
+      a[index1] = addr; // 分配一级间接块
+      log_write(bp); // 写回二级间接块
+    }
+    brelse(bp); // 释放二级间接块
+
+    bp = bread(ip->dev, addr);  // 同理加载一级间接块并处理
+    a = (uint*)bp->data;
+    if ((addr = a[index2]) == 0) {
+      addr = balloc(ip->dev);
+      if (addr) {
+        a[index2] = addr;
+        log_write(bp);
+      }
+    }
+    brelse(bp); // 释放一级间接块
+    return addr;
+  }
+  
   panic("bmap: out of range");
 }
 
@@ -469,6 +508,27 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  // 释放二级间接块
+  if (ip->addrs[NDIRECT + 1]) {
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]); // 读取二级间接块
+    a = (uint*)bp->data;
+    for (j = 0; j < NINDIRECT; j++) { // 遍历二级间接块中的每个一级间接块指针
+      if (a[j]) {
+        struct buf *bp2 = bread(ip->dev, a[j]); // 读取一级间接块
+        uint *a2 = (uint*)bp2->data;
+        for (int k = 0; k < NINDIRECT; k++) { // 遍历一级间接块中的每个数据块指针
+          if (a2[k])
+            bfree(ip->dev, a2[k]); // 释放数据块
+        }
+        brelse(bp2);
+        bfree(ip->dev, a[j]); // 释放一级间接块
+      }
+    }
+    brelse(bp); 
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]); // 释放二级间接块
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;
