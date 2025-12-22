@@ -268,8 +268,6 @@ sys_unlink(void)
     goto bad;
   ilock(ip);
 
-  // 注意：不跟踪符号链接
-  // unlink删除的是符号链接本身，而非其目标
   
   if(ip->nlink < 1)
     panic("unlink: nlink < 1");
